@@ -1,14 +1,14 @@
 use std::{collections::HashMap, path::PathBuf};
 
-use anyhow::{Ok, Result};
-use candle_core::{DType, Result as CdlResult, Tensor, D};
-use candle_nn::{embedding, linear, Dropout, Embedding, LayerNorm, Linear, Module, VarBuilder};
 use constants::{ID_TO_LABEL, LABEL_TO_ID};
 use hf_hub::{api::sync::Api, Repo};
 use serde::{Deserialize, Serialize};
 use tokenizers::{tokenizer, PaddingParams, PaddingStrategy, Tokenizer};
-pub mod build;
+use candle_core::{D, DType, Result as CdlResult, Tensor};
+use candle_nn::{embedding, linear, Dropout, Embedding, LayerNorm, Linear, Module, VarBuilder};
+use anyhow::{Ok, Result};
 pub mod constants;
+pub mod build;
 
 pub const DTYPE: DType = DType::F32;
 
@@ -23,12 +23,12 @@ enum HiddenAct {
 #[serde(rename_all = "lowercase")]
 enum PosAttType {
     P2C,
-    C2P,
+    C2P
 }
 
 #[derive(Deserialize)]
 pub(crate) struct ModelConfig {
-    attention_probs_dropout_prob: f32,
+    attention_probs_dropout_prob : f32,
     hidden_act: HiddenAct,
     hidden_dropout_prob: f32,
     hidden_size: usize,
@@ -36,10 +36,10 @@ pub(crate) struct ModelConfig {
     initializer_range: f32,
     intermediate_size: usize,
     label2id: HashMap<String, usize>,
-    layer_norm_eps: f64,
+    layer_norm_eps:  f64,
     model_type: Option<String>,
     norm_rel_ebd: Option<String>,
-    num_attention_heads: usize,
+    num_attention_heads : usize,
     num_hidden_layers: usize,
     pad_token_id: usize,
     pooler_dropout: usize,
@@ -52,7 +52,7 @@ pub(crate) struct ModelConfig {
     max_position_embeddings: usize,
     max_relative_positions: i32,
     type_vocab_size: usize,
-    vocab_size: usize,
+    vocab_size : usize,
 }
 
 impl Default for ModelConfig {
@@ -82,7 +82,7 @@ impl Default for ModelConfig {
             position_buckets: 256,
             relative_attention: true,
             type_vocab_size: 0,
-            vocab_size: 128100,
+            vocab_size: 128100
         }
     }
 }
@@ -104,7 +104,7 @@ impl NERModel {
         token_type_embeddings: Embedding,
         layer_norm: LayerNorm,
         dropout: Dropout,
-        classifier: Linear,
+        classifier: Linear
     ) -> Self {
         let span = tracing::span!(tracing::Level::TRACE, "NERModel");
         Self {
@@ -118,7 +118,10 @@ impl NERModel {
         }
     }
 
-    pub fn load(vb: candle_nn::VarBuilder, config: &ModelConfig) -> Result<Self> {
+    pub fn load(
+        vb: candle_nn::VarBuilder,
+        config: &ModelConfig,
+    ) -> Result<Self> {
         let word_embeddings = embedding(
             config.vocab_size,
             config.hidden_size,
@@ -172,10 +175,10 @@ impl NERModel {
         position_ids: Option<&Tensor>,
     ) -> Result<Tensor> {
         let _enter = self.span.enter();
-
+        
         // Get embeddings for input tokens
         let inputs_embeds = self.word_embeddings.forward(input_ids)?;
-
+        
         // Get token type embeddings
         let token_type_embeddings = match token_type_ids {
             Some(ids) => self.token_type_embeddings.forward(ids)?,
@@ -185,10 +188,10 @@ impl NERModel {
                 self.token_type_embeddings.forward(&zeros)?
             }
         };
-
+        
         // Add token embeddings
         let mut hidden_states = (inputs_embeds + token_type_embeddings)?;
-
+        
         // Add position embeddings if present
         if let Some(position_embeddings) = &self.position_embeddings {
             let position_embeddings = match position_ids {
@@ -203,14 +206,14 @@ impl NERModel {
             };
             hidden_states = (hidden_states + position_embeddings)?;
         }
-
+        
         // Apply layer norm and dropout
         let hidden_states = self.layer_norm.forward(&hidden_states)?;
         let hidden_states = self.dropout.forward(&hidden_states, true)?;
-
+        
         // Apply classification layer
         let logits = self.classifier.forward(&hidden_states)?;
-
+        
         Ok(logits)
     }
 
@@ -218,17 +221,18 @@ impl NERModel {
         logits.argmax(2)
     }
 
-    pub fn predict_sentence(
-        &self,
+    pub fn predict_sentence(&self,
         sentence: &str,
         tokenizer: &Tokenizer,
-    ) -> Result<Vec<TokenPrediction>> {
+    ) -> Result<NERAnalysis>{
+
         let encoding = tokenizer.encode(sentence, true).unwrap();
         let tokens = encoding.get_tokens();
         let input_ids = encoding.get_ids();
 
         // Covert to tensor
         let input_tensor = Tensor::new(input_ids, &candle_core::Device::Cpu)?.unsqueeze(0)?;
+
 
         // Get model predictions
         let logits = self.forward(&input_tensor, None, None)?;
@@ -248,22 +252,27 @@ impl NERModel {
         let mut res = Vec::new();
 
         for ((token, &pred_id), score) in tokens.iter().zip(pred_array.iter()).zip(scores.iter()) {
-            let label = ID_TO_LABEL
-                .get(&pred_id.to_string())
-                .unwrap_or(&"0")
-                .to_string();
+            let label = ID_TO_LABEL.get(&pred_id.to_string())
+            .unwrap_or(&"0")
+            .to_string();
 
-            res.push(TokenPrediction {
-                token: token.clone(),
-                label,
-                score: *score,
-                start: None,
-                end: None,
-            });
+            res.push(
+                TokenPrediction{
+                    token: token.clone(),
+                    label,
+                    score: *score,
+                    start: None,
+                    end: None
+                }
+            );
         }
-        Ok(res)
+        Ok(NERAnalysis {
+            text: sentence.to_string(),
+            tokens: res,
+        })
     }
 }
+
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TokenPrediction {
