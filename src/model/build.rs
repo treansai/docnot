@@ -32,7 +32,6 @@ pub fn get_ner_model() -> Result<(NERModel, Tokenizer)> {
     // Read tokenizer
     let tokenizer = Tokenizer::from_file(tokenizer_path).expect("errors in tokenizer");
     // Load the model weights
-    let device = candle_core::Device::Cpu;
     let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[weights_path], DTYPE, &Device::Cpu)? };
 
     // Initialize label mappings from constants
