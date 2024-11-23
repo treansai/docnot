@@ -57,8 +57,6 @@ impl Default for ModelConfig {
 
 pub(crate) struct NERModel {
     word_embeddings: Embedding,
-    position_embeddings: Option<Embedding>,
-    token_type_embeddings: Embedding,
     layer_norm: LayerNorm,
     dropout: Dropout,
     classifier: Linear,
@@ -68,8 +66,6 @@ pub(crate) struct NERModel {
 impl NERModel {
     pub fn new(
         word_embeddings: Embedding,
-        position_embeddings: Option<Embedding>,
-        token_type_embeddings: Embedding,
         layer_norm: LayerNorm,
         dropout: Dropout,
         classifier: Linear
@@ -77,8 +73,6 @@ impl NERModel {
         let span = tracing::span!(tracing::Level::TRACE, "NERModel");
         Self {
             word_embeddings,
-            position_embeddings,
-            token_type_embeddings,
             layer_norm,
             dropout,
             classifier,
@@ -93,29 +87,13 @@ impl NERModel {
         let word_embeddings = embedding(
             config.vocab_size,
             config.hidden_size,
-            vb.pp("word_embeddings"),
-        )?;
-
-        let position_embeddings = if !config.relative_attention {
-            Some(embedding(
-                config.max_position_embeddings,
-                config.hidden_size,
-                vb.pp("position_embeddings"),
-            )?)
-        } else {
-            None
-        };
-
-        let token_type_embeddings = embedding(
-            config.type_vocab_size,
-            config.hidden_size,
-            vb.pp("token_type_embeddings"),
+            vb.pp("deberta.embeddings.word_embeddings"),
         )?;
 
         let layer_norm = candle_nn::layer_norm(
             config.hidden_size,
             config.layer_norm_eps,
-            vb.pp("LayerNorm"),
+            vb.pp("deberta.embeddings.LayerNorm"),
         )?;
 
         let dropout = Dropout::new(config.hidden_dropout_prob);
@@ -128,8 +106,6 @@ impl NERModel {
 
         Ok(Self::new(
             word_embeddings,
-            position_embeddings,
-            token_type_embeddings,
             layer_norm,
             dropout,
             classifier,
@@ -139,41 +115,11 @@ impl NERModel {
     pub fn forward(
         &self,
         input_ids: &Tensor,
-        token_type_ids: Option<&Tensor>,
-        position_ids: Option<&Tensor>,
     ) -> Result<Tensor> {
         let _enter = self.span.enter();
         
         // Get embeddings for input tokens
-        let inputs_embeds = self.word_embeddings.forward(input_ids)?;
-        
-        // Get token type embeddings
-        let token_type_embeddings = match token_type_ids {
-            Some(ids) => self.token_type_embeddings.forward(ids)?,
-            None => {
-                let (bsize, seq_len) = input_ids.dims2()?;
-                let zeros = input_ids.zeros_like()?;
-                self.token_type_embeddings.forward(&zeros)?
-            }
-        };
-        
-        // Add token embeddings
-        let mut hidden_states = (inputs_embeds + token_type_embeddings)?;
-        
-        // Add position embeddings if present
-        if let Some(position_embeddings) = &self.position_embeddings {
-            let position_embeddings = match position_ids {
-                Some(ids) => position_embeddings.forward(ids)?,
-                None => {
-                    let (bsize, seq_len) = input_ids.dims2()?;
-                    let position_ids = Tensor::arange(0u32, seq_len as u32, &input_ids.device())?
-                        .unsqueeze(0)?
-                        .expand((bsize, seq_len))?;
-                    position_embeddings.forward(&position_ids)?
-                }
-            };
-            hidden_states = (hidden_states + position_embeddings)?;
-        }
+        let hidden_states = self.word_embeddings.forward(input_ids)?;
         
         // Apply layer norm and dropout
         let hidden_states = self.layer_norm.forward(&hidden_states)?;
@@ -183,10 +129,6 @@ impl NERModel {
         let logits = self.classifier.forward(&hidden_states)?;
         
         Ok(logits)
-    }
-
-    pub fn predict(&self, logits: &Tensor) -> CdlResult<Tensor> {
-        logits.argmax(2)
     }
 
     pub fn predict_sentence(&self,
@@ -203,7 +145,7 @@ impl NERModel {
 
 
         // Get model predictions
-        let logits = self.forward(&input_tensor, None, None)?;
+        let logits = self.forward(&input_tensor)?;
 
         // get proba
         let proba = candle_nn::ops::softmax(&logits, D::Minus1)?;
