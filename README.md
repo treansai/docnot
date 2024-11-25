@@ -18,7 +18,7 @@ using build ready image
 docker pull ghcr.io/treansai/docnot:latest
 
 # Run the image
-docker run ghcr.io/treansai/docnot:latest
+docker run -p 9494:9494 ghcr.io/treansai/docnot:latest
 ```
 
 or self build
