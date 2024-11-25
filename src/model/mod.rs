@@ -1,14 +1,14 @@
 use std::{collections::HashMap, path::PathBuf};
 
+use anyhow::{Ok, Result};
+use candle_core::{DType, Result as CdlResult, Tensor, D};
+use candle_nn::{embedding, linear, Dropout, Embedding, LayerNorm, Linear, Module, VarBuilder};
 use constants::{ID_TO_LABEL, LABEL_TO_ID};
 use hf_hub::{api::sync::Api, Repo};
 use serde::{Deserialize, Serialize};
 use tokenizers::{tokenizer, PaddingParams, PaddingStrategy, Tokenizer};
-use candle_core::{D, DType, Result as CdlResult, Tensor};
-use candle_nn::{embedding, linear, Dropout, Embedding, LayerNorm, Linear, Module, VarBuilder};
-use anyhow::{Ok, Result};
-pub mod constants;
 pub mod build;
+pub mod constants;
 
 pub const DTYPE: DType = DType::F32;
 
@@ -23,7 +23,7 @@ enum HiddenAct {
 #[serde(rename_all = "lowercase")]
 enum PosAttType {
     P2C,
-    C2P
+    C2P,
 }
 
 #[derive(Deserialize)]
@@ -32,11 +32,11 @@ pub(crate) struct ModelConfig {
     hidden_size: usize,
     id2label: HashMap<String, String>,
     label2id: HashMap<String, usize>,
-    layer_norm_eps:  f64,
+    layer_norm_eps: f64,
     relative_attention: bool,
     max_position_embeddings: usize,
     type_vocab_size: usize,
-    vocab_size : usize,
+    vocab_size: usize,
 }
 
 impl Default for ModelConfig {
@@ -50,7 +50,7 @@ impl Default for ModelConfig {
             max_position_embeddings: 512,
             relative_attention: true,
             type_vocab_size: 0,
-            vocab_size: 128100
+            vocab_size: 128100,
         }
     }
 }
@@ -68,7 +68,7 @@ impl NERModel {
         word_embeddings: Embedding,
         layer_norm: LayerNorm,
         dropout: Dropout,
-        classifier: Linear
+        classifier: Linear,
     ) -> Self {
         let span = tracing::span!(tracing::Level::TRACE, "NERModel");
         Self {
@@ -80,10 +80,7 @@ impl NERModel {
         }
     }
 
-    pub fn load(
-        vb: candle_nn::VarBuilder,
-        config: &ModelConfig,
-    ) -> Result<Self> {
+    pub fn load(vb: candle_nn::VarBuilder, config: &ModelConfig) -> Result<Self> {
         let word_embeddings = embedding(
             config.vocab_size,
             config.hidden_size,
@@ -104,45 +101,32 @@ impl NERModel {
             vb.pp("classifier"),
         )?;
 
-        Ok(Self::new(
-            word_embeddings,
-            layer_norm,
-            dropout,
-            classifier,
-        ))
+        Ok(Self::new(word_embeddings, layer_norm, dropout, classifier))
     }
 
-    pub fn forward(
-        &self,
-        input_ids: &Tensor,
-    ) -> Result<Tensor> {
+    pub fn forward(&self, input_ids: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
-        
+
         // Get embeddings for input tokens
         let hidden_states = self.word_embeddings.forward(input_ids)?;
-        
+
         // Apply layer norm and dropout
         let hidden_states = self.layer_norm.forward(&hidden_states)?;
         let hidden_states = self.dropout.forward(&hidden_states, true)?;
-        
+
         // Apply classification layer
         let logits = self.classifier.forward(&hidden_states)?;
-        
+
         Ok(logits)
     }
 
-    pub fn predict_sentence(&self,
-        sentence: &str,
-        tokenizer: &Tokenizer,
-    ) -> Result<NERAnalysis>{
-
+    pub fn predict_sentence(&self, sentence: &str, tokenizer: &Tokenizer) -> Result<NERAnalysis> {
         let encoding = tokenizer.encode(sentence, true).unwrap();
         let tokens = encoding.get_tokens();
         let input_ids = encoding.get_ids();
 
         // Covert to tensor
         let input_tensor = Tensor::new(input_ids, &candle_core::Device::Cpu)?.unsqueeze(0)?;
-
 
         // Get model predictions
         let logits = self.forward(&input_tensor)?;
@@ -162,19 +146,18 @@ impl NERModel {
         let mut res = Vec::new();
 
         for ((token, &pred_id), score) in tokens.iter().zip(pred_array.iter()).zip(scores.iter()) {
-            let label = ID_TO_LABEL.get(&pred_id.to_string())
-            .unwrap_or(&"0")
-            .to_string();
+            let label = ID_TO_LABEL
+                .get(&pred_id.to_string())
+                .unwrap_or(&"0")
+                .to_string();
 
-            res.push(
-                TokenPrediction{
-                    token: token.clone(),
-                    label,
-                    score: *score,
-                    start: None,
-                    end: None
-                }
-            );
+            res.push(TokenPrediction {
+                token: token.clone(),
+                label,
+                score: *score,
+                start: None,
+                end: None,
+            });
         }
         Ok(NERAnalysis {
             text: sentence.to_string(),
@@ -182,7 +165,6 @@ impl NERModel {
         })
     }
 }
-
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TokenPrediction {

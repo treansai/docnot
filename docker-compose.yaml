@@ -1,3 +1,14 @@
+version: '3.8'
+
 services:
-  app:
-    image: ghcr.io/treansai/docnot:latest
+  ner-model:
+    build: .
+    ports:
+      - "9494:9494"
+    volumes:
+      - huggingface-cache:/root/.cache/huggingface
+    environment:
+      - RUST_LOG=info
+
+volumes:
+  huggingface-cache:

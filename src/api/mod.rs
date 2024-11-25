@@ -12,7 +12,7 @@ use axum::{
 use candle_core::Device;
 use serde_json::json;
 use tokenizers::Tokenizer;
-use tower_http::cors::{CorsLayer, Any};
+use tower_http::cors::{Any, CorsLayer};
 
 use crate::model::NERModel;
 
@@ -45,14 +45,13 @@ impl Pipeline {
 }
 
 pub fn init_router(state: Arc<Context>) -> Router {
-
     let cors = CorsLayer::new()
         .allow_methods([Method::GET, Method::POST, Method::DELETE])
         .allow_origin(Any);
 
     Router::new()
         .route("/", get(base_handler))
-        .route("/predict:text", get(get_analyse))
+        .route("/predict/:text", get(get_analyse))
         .layer(cors)
         .with_state(state)
 }
